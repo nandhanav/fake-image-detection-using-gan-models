@@ -1,0 +1,110 @@
+import numpy as np
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
+import matplotlib.pyplot as plt
+
+# Constants
+Image_Size = 256
+Batch_Size = 32
+Channels = 3
+Epochs = 50
+
+# Load the dataset
+dataset = tf.keras.preprocessing.image_dataset_from_directory(
+    "../input/real-and-fake-face-detection/real_and_fake_face/",
+    shuffle=True,
+    image_size=(Image_Size, Image_Size),
+    batch_size=Batch_Size)
+
+class_names = dataset.class_names
+
+# Define a function for dataset splitting
+def splitting_dataset_tf(ds, train_split=0.8, val_split=0.1, test_split=0.1, shuffle=True, shuffle_size=10000):
+    ds_size = len(ds)
+
+    if shuffle:
+        ds = ds.shuffle(shuffle_size, seed=12)
+
+    train_size = int(train_split * ds_size)
+    val_size = int(val_split * ds_size)
+
+    train_ds = ds.take(train_size)
+    val_ds = ds.skip(train_size).take(val_size)
+    test_ds = ds.skip(train_size).skip(val_size)
+
+    return train_ds, val_ds, test_ds
+
+train_ds, val_ds, test_ds = splitting_dataset_tf(dataset)
+print(len(train_ds), len(val_ds), len(test_ds))
+
+# Data preprocessing
+resize_and_rescale = keras.Sequential([
+    layers.experimental.preprocessing.Resizing(Image_Size, Image_Size),
+    layers.experimental.preprocessing.Rescaling(1.0 / 255)
+])
+
+data_augmentation = keras.Sequential([
+    layers.experimental.preprocessing.RandomFlip("horizontal_and_vertical"),
+    layers.experimental.preprocessing.RandomRotation(0.2),
+])
+
+# Build the model
+model = keras.Sequential([
+    resize_and_rescale,
+    data_augmentation,
+    layers.Conv2D(32, (3, 3), activation='relu', input_shape=(Image_Size, Image_Size, Channels)),
+    layers.MaxPooling2D((2, 2)),
+    layers.Conv2D(64, kernel_size=(3, 3), activation='relu'),
+    layers.MaxPooling2D((2, 2)),
+    layers.Conv2D(64, kernel_size=(3, 3), activation='relu'),
+    layers.MaxPooling2D((2, 2)),
+    layers.Conv2D(64, (3, 3), activation='relu'),
+    layers.MaxPooling2D((2, 2)),
+    layers.Flatten(),
+    layers.Dense(64, activation='relu'),
+    layers.Dense(len(class_names), activation='softmax'),
+])
+
+# Compile the model
+model.compile(
+    optimizer='adam',
+    loss='sparse_categorical_crossentropy',
+    metrics=['accuracy']
+)
+
+# Train the model
+history = model.fit(
+    train_ds,
+    epochs=Epochs,
+    validation_data=val_ds
+)
+
+# Evaluate the model on the test dataset
+scores = model.evaluate(test_ds)
+
+# Define a function for making predictions
+def predict_class(model, image):
+    img_array = tf.keras.preprocessing.image.img_to_array(image)
+    img_array = tf.expand_dims(img_array, 0)
+
+    predictions = model.predict(img_array)
+
+    predicted_class = class_names[np.argmax(predictions[0])]
+    confidence = round(100 * np.max(predictions[0]), 2)
+    return predicted_class, confidence
+
+# Visualize predictions on a batch of test images
+plt.figure(figsize=(15, 15))
+for images, labels in test_ds.take(1):
+    for i in range(9):
+        ax = plt.subplot(3, 3, i + 1)
+        plt.imshow(images[i].numpy().astype("uint8"))
+
+        predicted_class, confidence = predict_class(model, images[i])
+        actual_class = class_names[labels[i]]
+
+        plt.title(f"Actual: {actual_class}, Predicted: {predicted_class}, Confidence: {confidence}%")
+        plt.axis("off")
+
+plt.show()
